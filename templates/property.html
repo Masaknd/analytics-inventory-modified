@@ -36,6 +36,15 @@
   <span class="small" style="display:block;margin-top:4px;font-weight:normal">ID {{ d.summary.property_id }} ・ {{ d.summary.account_display_name }} ・ {{ d.summary.auth_email }}</span>
 </h1>
 
+{# 改善コックピットのURLが設定されているときだけ出す行き先。未設定なら何も出さない #}
+{% if cockpit_url %}
+<p class="small" style="margin:-6px 0 14px">
+  🔗 計測の次は改善へ:
+  <a class="prop" href="{{ cockpit_url }}" target="_blank" rel="noopener">改善コックピットを開く</a>
+  <span style="color:#888">— このプロパティID（{{ d.summary.property_id }}）でサイトを登録しておくと、向こう側に計測品質が表示されます</span>
+</p>
+{% endif %}
+
 {% if d.alerts %}
 <div class="card" style="margin-bottom:14px">
   <h2>🚨 アラート ({{ d.alerts|length }})</h2>

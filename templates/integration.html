@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}改善コックピット連携 — Analytics Inventory{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs"><a href="/">ホーム</a><span class="sep">/</span><span>改善コックピット連携</span></nav>
+{% endblock %}
+{% block body %}
+<h1 style="font-size:18px;margin:6px 0 14px">🔗 改善コックピットとの連携</h1>
+
+{% if demo_mode %}
+<div class="alert-banner">🧪 デモ環境のため、連携先の保存は無効化されています。</div>
+{% endif %}
+
+<div class="card" style="max-width:860px">
+  <h2>連携は任意です</h2>
+  <p class="small" style="margin-bottom:0">
+    このツールは連携なしでも通常どおり動きます。設定するのは
+    <b>相手ツール（改善コックピット / UX-Testing-Tools）への行き先</b>だけで、
+    計測データの収集・品質チェック・通知の挙動は変わりません。
+    連携を外したいときは URL を空にして保存してください。
+  </p>
+</div>
+
+<div class="card" style="max-width:860px">
+  <h2>① 管理システム側で設定すること</h2>
+  <p class="small">改善コックピットのURL（ブラウザで開くときのアドレス）を入れてください。ローカルで動かしているなら <code>http://127.0.0.1:3000</code> のような形です。</p>
+
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+    <input type="url" id="cockpit-url" placeholder="http://127.0.0.1:3000" value="{{ cockpit_url or '' }}"
+           {% if from_env %}disabled title="環境変数 COCKPIT_URL が優先されています"{% endif %}
+           style="flex:1;min-width:280px;padding:8px 10px;border:1px solid var(--g-border);border-radius:5px;background:var(--g-card);color:var(--g-text)">
+    <button class="btn primary" onclick="saveCockpit()" {% if demo_mode or from_env %}disabled title="{% if from_env %}環境変数が優先されています{% else %}デモ環境では無効です{% endif %}"{% endif %}>💾 保存</button>
+    <button class="btn" onclick="testCockpit()">🔌 接続テスト</button>
+  </div>
+  <div id="cockpit-result" class="small" style="margin-top:10px"></div>
+
+  {% if from_env %}
+  <p class="small" style="margin-top:12px">
+    環境変数 <code>COCKPIT_URL</code> が設定されているため、そちらが優先されます（画面からは変更できません）。
+  </p>
+  {% endif %}
+
+  {% if cockpit_url %}
+  <p class="small" style="margin-top:12px">
+    設定済み: <a class="prop" href="{{ cockpit_url }}" target="_blank" rel="noopener">{{ cockpit_url }}</a>
+    — プロパティ詳細に「このサイトの改善を見る」の行き先が出ます。
+  </p>
+  {% endif %}
+</div>
+
+<div class="card" style="max-width:860px">
+  <h2>② 改善コックピット側で設定すること</h2>
+  <p class="small">
+    改善コックピットの「データ連携」ページに、<b>この管理システムのURL</b>を登録してください。
+    相手側はそのURLの <code>/api/health</code> で接続を確認し、
+    <code>/api/property/&lt;プロパティID&gt;/summary</code> で計測品質を読み取ります（読み取り専用・認証なし）。
+  </p>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+    <input type="text" id="self-url" readonly value="{{ self_url }}"
+           style="flex:1;min-width:280px;padding:8px 10px;border:1px solid var(--g-border);border-radius:5px;background:var(--g-bg);color:var(--g-text)">
+    <button class="btn" onclick="copySelfUrl()">📋 コピー</button>
+  </div>
+  <p class="small" style="margin-top:10px">
+    別のPCから繋ぐ場合は <code>127.0.0.1</code> ではなくこのPCのIPアドレスやホスト名に読み替えてください。
+    社外には公開せず、同じネットワーク内に留めることを前提にしています。
+  </p>
+</div>
+
+<div class="card" style="max-width:860px">
+  <h2>連携すると何が変わるか</h2>
+  <table style="font-size:13px">
+    <thead><tr><th style="width:38%">渡す内容</th><th>相手側での使われ方</th></tr></thead>
+    <tbody>
+      <tr><td>ヘルスグレード・スコア・品質チェックの件数と上位の指摘</td><td>改善プロジェクトの Measure 段に「計測はそもそも信用できるか」を表示</td></tr>
+      <tr><td>キーイベントの定義数と実測（0件かどうか）</td><td>「CVが1件も計測されていない」警告の根拠。未確認のときは警告しない</td></tr>
+      <tr><td>監視除外・一時停止の状態</td><td>ここで監視対象外にしたプロパティを、相手側が品質警告として出さない</td></tr>
+      <tr><td>ホスト名棚卸しの上位</td><td>診断しようとしているURLが計測対象ホストかの照合（ステージングを本番と誤認しない）</td></tr>
+      <tr><td>直近の変化イベント件数と最新日</td><td>前後比較の区間に計測設定の変更が挟まっていないかの確認</td></tr>
+    </tbody>
+  </table>
+  <p class="small" style="margin-top:12px">
+    渡すのは<b>計測設定とその品質の要約だけ</b>です。アクセス権限の一覧・認証情報・AI分析の本文は渡しません。
+  </p>
+</div>
+
+<script>
+function cockpitInput(){ return document.getElementById('cockpit-url'); }
+
+async function saveCockpit(){
+  const url = cockpitInput().value.trim();
+  try {
+    const r = await fetch('/api/integration/cockpit', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cockpit_url: url})});
+    const d = await r.json();
+    if(d.ok){
+      showToast(d.cockpit_url ? '連携先を保存しました' : '連携先を外しました');
+      setTimeout(() => location.reload(), 600);
+    } else { showToast('保存失敗: ' + (d.error || ''), 'error'); }
+  } catch(e){ showToast('保存失敗: ' + e.message, 'error'); }
+}
+
+async function testCockpit(){
+  const box = document.getElementById('cockpit-result');
+  const url = cockpitInput().value.trim();
+  box.innerHTML = '<span class="small">接続を確認しています…</span>';
+  try {
+    const r = await fetch('/api/integration/cockpit/test', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cockpit_url: url})});
+    const d = await r.json();
+    if(d.ok){
+      box.innerHTML = '<span class="alert-ok">✓ 繋がりました</span> <span class="small">' +
+        (d.app || '改善コックピット') + (d.version ? '（版 ' + d.version + '）' : '') + '</span>';
+    } else {
+      box.innerHTML = '<span class="alert-warn">✕ 繋がりませんでした</span><br><span class="small">' +
+        (d.error || '') + '</span><br><span class="small">' + (d.hint || '') + '</span>';
+    }
+  } catch(e){
+    box.innerHTML = '<span class="alert-warn">✕ 確認できませんでした</span> <span class="small">' + e.message + '</span>';
+  }
+}
+
+async function copySelfUrl(){
+  const el = document.getElementById('self-url');
+  try {
+    await navigator.clipboard.writeText(el.value);
+    showToast('コピーしました');
+  } catch(e){
+    el.select();
+    showToast('手動でコピーしてください', 'error');
+  }
+}
+</script>
+{% endblock %}

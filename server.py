@@ -28,6 +28,7 @@ import clients as clients_mod
 import crossref
 import diff as diff_mod
 import health
+import integration
 import notifications
 import thresholds
 import update_check
@@ -99,8 +100,14 @@ def _load_inventory() -> dict:
 
 @app.context_processor
 def inject_globals():
+    # cockpit_url は未設定が既定（連携なし）。取得に失敗しても画面は従来どおり描く。
+    try:
+        cockpit = integration.cockpit_url()
+    except Exception:
+        cockpit = None
     return {"all_tags": ann.all_tags(), "demo_mode": DEMO_MODE,
-            "github_url": f"https://github.com/{GITHUB_REPO}"}
+            "github_url": f"https://github.com/{GITHUB_REPO}",
+            "cockpit_url": cockpit}
 
 
 @app.route("/api/health")
@@ -122,6 +129,9 @@ def api_health():
         "property_count": inv.get("property_count", len(inv.get("properties") or [])),
         "gtm_container_count": inv.get("gtm_container_count", len(inv.get("gtm_containers") or [])),
         "sc_site_count": inv.get("sc_site_count", len(inv.get("sc_sites") or [])),
+        # 相手側がバージョン文字列を解釈せずに出し分けられるようにする名札。
+        # このキーが無い版（v1.4.2以前）は summary の追加フィールドを返さない。
+        "api_features": integration.API_FEATURES,
     })
 
 
@@ -146,25 +156,22 @@ def api_property_summary(pid: str):
     # health_grade/health_score/alert_count は summary に保存されておらず、都度算出する
     # （property_detail のパターンと同じ: health.enrich_properties を1件に対して適用）。
     health.enrich_properties([summary])
-    findings = ((detail.get("quality") or {}).get("findings") or [])
-    _severity_rank = {"error": 0, "warn": 1, "info": 2}
-    sorted_findings = sorted(findings, key=lambda f: _severity_rank.get(f.get("level"), 3))
-    top_findings = [
-        {"severity": f.get("level"), "category": f.get("category"), "title": f.get("title")}
-        for f in sorted_findings[:5]
-    ]
-    return jsonify({
-        "property_id": pid,
-        "display_name": summary.get("display_name"),
-        "health_grade": summary.get("health_grade"),
-        "health_score": summary.get("health_score"),
-        "key_event_names": summary.get("key_event_names") or [],
-        "quality": summary.get("quality"),
-        "alerts_count": summary.get("alert_count"),
-        "top_findings": top_findings,
-        "collected_at": summary.get("collected_at"),
-        "property_url": f"/property/{pid}",
-    })
+    detail["summary"] = summary
+
+    # 追加フィールド（monitoring/hostnames/key_events/recent_changes）は任意扱い。
+    # 取得に失敗しても既存フィールドだけで応答を返す＝相手がどの版でも壊れない。
+    ann_entry, change_events = None, None
+    try:
+        ann_entry = ann.get("properties", pid)
+    except Exception:
+        ann_entry = None
+    try:
+        change_events = changes_mod.filter_excluded(
+            changes_mod.load_log(limit=changes_mod.MAX_LOG_ENTRIES))
+    except Exception:
+        change_events = None
+    return jsonify(integration.property_payload(
+        pid, detail, ann_entry=ann_entry, change_events=change_events))
 
 
 @app.route("/")
@@ -1128,6 +1135,79 @@ def api_thresholds():
     data = request.get_json(silent=True) or {}
     cur = thresholds.save(data)
     return jsonify({"ok": True, "thresholds": cur})
+
+
+@app.route("/settings/integration")
+def integration_page():
+    """改善コックピット（UX-Testing-Tools）との連携設定。未設定が既定＝連携なしで通常動作。"""
+    inv = _load_inventory()
+    return render_template("integration.html", inv=inv,
+                           cockpit_url=integration.cockpit_url(),
+                           from_env=integration.cockpit_url_from_env(),
+                           self_url=f"http://127.0.0.1:{SERVER_PORT}")
+
+
+@app.route("/api/integration/cockpit", methods=["GET", "POST"])
+def api_integration_cockpit():
+    if request.method == "GET":
+        return jsonify({"cockpit_url": integration.cockpit_url(),
+                        "from_env": integration.cockpit_url_from_env()})
+    if DEMO_MODE:
+        return jsonify({"ok": False, "error": "デモ環境では連携先の保存は無効です"}), 403
+    if integration.cockpit_url_from_env():
+        return jsonify({"ok": False,
+                        "error": "環境変数 COCKPIT_URL が優先されているため、画面からは変更できません"}), 409
+    data = request.get_json(silent=True) or {}
+    raw = str(data.get("cockpit_url") or "").strip()
+    if raw and integration.normalize_url(raw) is None:
+        return jsonify({"ok": False,
+                        "error": "http:// または https:// で始まるURLを入れてください"}), 400
+    saved = integration.save_cockpit_url(raw)
+    return jsonify({"ok": True, "cockpit_url": saved})
+
+
+@app.route("/api/integration/cockpit/test", methods=["POST"])
+def api_integration_cockpit_test():
+    """改善コックピットの /api/health に繋がるかだけ確かめる。
+
+    応答本文はそのまま返さない（相手の health にはローカルのDBパス等が含まれるため、
+    status と version だけ拾う）。失敗は「直し方」つきの日本語で返す。
+    """
+    data = request.get_json(silent=True) or {}
+    url = integration.normalize_url(data.get("cockpit_url")) or integration.cockpit_url()
+    if not url:
+        return jsonify({"ok": False, "error": "URLが未入力です",
+                        "hint": "改善コックピットをブラウザで開いたときのアドレスを入れてください。"})
+    import urllib.error
+    import urllib.request
+    endpoint = f"{url}/api/health"
+    try:
+        req = urllib.request.Request(endpoint, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read(65536) or b"{}")
+    except urllib.error.HTTPError as e:
+        return jsonify({"ok": False, "error": f"{endpoint} が HTTP {e.code} を返しました",
+                        "hint": "URLの綴り（ポート番号を含む）を確認してください。"})
+    except urllib.error.URLError as e:
+        return jsonify({"ok": False, "error": f"{endpoint} に接続できません（{str(e.reason)[:80]}）",
+                        "hint": "改善コックピットが起動しているか、ポート番号が合っているかを確認してください。"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}",
+                        "hint": "URLがJSONを返す改善コックピットのものか確認してください。"})
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        return jsonify({"ok": False, "error": f"{endpoint} の応答が想定と違います",
+                        "hint": "改善コックピット以外のURLを指していないか確認してください。"})
+    # URLの取り違えを弾く。app 名札が無い応答は古い改善コックピットの可能性があるので通す
+    # （相手を新しい版に上げないと繋がらない、という状態を作らない）。
+    app_name = str(body.get("app") or "")
+    if app_name == "analytics-inventory":
+        return jsonify({"ok": False, "error": "このツール自身（GA4/GTM管理システム）を指しています",
+                        "hint": "改善コックピットのURL（既定では :3000）を入れてください。"})
+    if app_name and app_name != "kaizen-cockpit":
+        return jsonify({"ok": False, "error": f"別のアプリ（{app_name[:40]}）を指しています",
+                        "hint": "改善コックピットのURLを入れてください。"})
+    return jsonify({"ok": True, "app": "改善コックピット", "version": body.get("version"),
+                    "identified": bool(app_name)})
 
 
 @app.route("/api/notify/settings", methods=["GET", "POST"])
