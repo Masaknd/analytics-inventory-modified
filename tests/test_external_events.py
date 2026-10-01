@@ -15,7 +15,7 @@ import external_events as ee
 def _raw(**over):
     base = {"external_id": "init_abc123", "occurred_on": "2026-09-15",
             "title": "LPのCTA文言を変更", "kind": "initiative",
-            "property_id": "308259408", "status": "live",
+            "property_id": "123456789", "status": "live",
             "url": "http://127.0.0.1:3000/initiatives/abc"}
     base.update(over)
     return base
@@ -30,7 +30,7 @@ def test_normalize_accepts_well_formed_event():
     assert out is not None
     assert out["external_id"] == "init_abc123"
     assert out["occurred_on"] == "2026-09-15"
-    assert out["property_id"] == "308259408"
+    assert out["property_id"] == "123456789"
     assert out["source"] == "cockpit"
     assert out["received_at"]
 
@@ -111,7 +111,7 @@ def test_merge_respects_max_events():
 #  timeline — ①の目的そのもの
 # ============================================================
 
-def _change(at, severity="warn", pid="308259408"):
+def _change(at, severity="warn", pid="123456789"):
     return {"kind": "ga4", "entity_id": pid, "severity": severity, "detected_at": at,
             "message": "セッション急減"}
 
@@ -165,7 +165,7 @@ def test_record_is_idempotent(tmp_path, monkeypatch):
 def test_for_property_filters(tmp_path, monkeypatch):
     monkeypatch.setattr(ee, "EXTERNAL_EVENTS_PATH", tmp_path / "ext.json")
     ee.record([_raw(), _raw(external_id="init_2", property_id="111")])
-    assert len(ee.for_property("308259408")) == 1
+    assert len(ee.for_property("123456789")) == 1
     assert len(ee.for_property("999")) == 0
 
 

@@ -191,12 +191,12 @@ V1_KEYS = ["property_id", "display_name", "health_grade", "health_score", "key_e
 
 def test_v1_keys_unchanged():
     """既存キーは消さない・改名しない（古い改善コックピットがそのまま読めること）。"""
-    d = _detail(summary={"display_name": "ga4.guide", "health_grade": "B", "health_score": 78.0})
-    out = integration.property_payload("308259408", d)
+    d = _detail(summary={"display_name": "example-site", "health_grade": "B", "health_score": 78.0})
+    out = integration.property_payload("123456789", d)
     for k in V1_KEYS:
         assert k in out, k
-    assert out["property_id"] == "308259408"
-    assert out["property_url"] == "/property/308259408"
+    assert out["property_id"] == "123456789"
+    assert out["property_url"] == "/property/123456789"
 
 
 def test_v2_keys_present():

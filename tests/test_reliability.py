@@ -10,13 +10,13 @@
 import reliability as rel
 
 
-def _ev(change_type, at, kind="ga4", pid="308259408", severity="warn"):
+def _ev(change_type, at, kind="ga4", pid="123456789", severity="warn"):
     return {"kind": kind, "entity_id": pid, "severity": severity,
             "change_type": change_type, "detected_at": at + "T12:00:00+00:00",
             "message": "テスト"}
 
 
-PID = "308259408"
+PID = "123456789"
 
 
 # ============================================================
