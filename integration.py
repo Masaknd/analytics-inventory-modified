@@ -36,9 +36,11 @@ HOSTNAME_LIMIT = 10
 FINDING_LIMIT = 5
 CHANGES_DAYS = 30
 
-# この版が summary で返せる追加フィールドの名札。相手側はバージョン文字列を解釈せず、
+# この版が対応している連携機能の名札。相手側はバージョン文字列を解釈せず、
 # /api/health の api_features を見て出し分けられる。
-API_FEATURES = ["property_summary_v2"]
+#   property_summary_v2 … summary が monitoring/hostnames/key_events/recent_changes を返す
+#   external_events     … 施策の実施日を受け取れる（POST /api/external_events・要連携キー）
+API_FEATURES = ["property_summary_v2", "external_events"]
 
 
 # ============================================================
@@ -276,7 +278,75 @@ def save_cockpit_url(value: Any) -> Optional[str]:
     with _lock:
         d = _load()
         d["cockpit_url"] = url
-        tmp = INTEGRATION_PATH.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, INTEGRATION_PATH)
+        _write(d)
     return url
+
+
+def _write(d: dict) -> None:
+    tmp = INTEGRATION_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, INTEGRATION_PATH)
+
+
+# ============================================================
+#  連携キー（書き込みAPIの保護）
+# ============================================================
+#
+# 計測品質の読み取り（summary）は認証なしのままでよいが、施策の実施日を**書き込む**
+# エンドポイントは誰でも叩けてはいけない。改善コックピットだけが持つ合言葉で守る。
+#
+# キーが未発行なら書き込みAPIは常に拒否する（fail closed）。設定画面を開くと発行される。
+
+TOKEN_ENV = "COCKPIT_TOKEN"
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
+
+
+def token() -> Optional[str]:
+    """現在の連携キー。未発行なら None。"""
+    env = str(os.environ.get(TOKEN_ENV) or "").strip()
+    if _TOKEN_RE.match(env):
+        return env
+    saved = str(_load().get("token") or "").strip()
+    return saved if _TOKEN_RE.match(saved) else None
+
+
+def token_from_env() -> bool:
+    env = str(os.environ.get(TOKEN_ENV) or "").strip()
+    return bool(_TOKEN_RE.match(env))
+
+
+def ensure_token() -> str:
+    """連携キーが無ければ発行して返す。環境変数指定時はそれをそのまま使う。"""
+    current = token()
+    if current:
+        return current
+    import secrets
+    new = secrets.token_urlsafe(24)
+    with _lock:
+        d = _load()
+        d["token"] = new
+        _write(d)
+    return new
+
+
+def rotate_token() -> str:
+    """連携キーを作り直す。古いキーで送ってくる相手は以後拒否される。"""
+    import secrets
+    new = secrets.token_urlsafe(24)
+    with _lock:
+        d = _load()
+        d["token"] = new
+        _write(d)
+    return new
+
+
+def check_token(value: Any) -> bool:
+    """送られてきたキーが正しいか。未発行なら常に False（fail closed）。"""
+    import hmac
+    current = token()
+    if not current:
+        return False
+    given = str(value or "").strip()
+    if not given:
+        return False
+    return hmac.compare_digest(current, given)

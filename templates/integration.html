@@ -63,6 +63,36 @@
     別のPCから繋ぐ場合は <code>127.0.0.1</code> ではなくこのPCのIPアドレスやホスト名に読み替えてください。
     社外には公開せず、同じネットワーク内に留めることを前提にしています。
   </p>
+
+  <h3 style="font-size:14px;margin:18px 0 6px">連携キー（施策の実施日を受け取るため）</h3>
+  <p class="small">
+    改善コックピットから<b>施策の実施日を送ってもらう</b>ときだけ必要です（読み取りだけなら不要）。
+    同じ値を改善コックピットの「データ連携」ページにも貼ってください。
+    <b>書き込みを受け付ける合言葉なので、他人に見せないでください。</b>
+  </p>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+    <input type="text" id="int-token" readonly value="{{ token }}"
+           style="flex:1;min-width:280px;padding:8px 10px;border:1px solid var(--g-border);border-radius:5px;background:var(--g-bg);color:var(--g-text);font-family:ui-monospace,monospace;font-size:12px">
+    <button class="btn" onclick="copyToken()">📋 コピー</button>
+    <button class="btn" onclick="rotateToken()" {% if demo_mode or token_from_env %}disabled title="{% if token_from_env %}環境変数が優先されています{% else %}デモ環境では無効です{% endif %}"{% endif %}>🔁 作り直す</button>
+  </div>
+  <p class="small" style="margin-top:8px">
+    作り直すと、古いキーで送ってくる改善コックピットは以後拒否されます（貼り直しが必要です）。
+    {% if token_from_env %}いまは環境変数 <code>COCKPIT_TOKEN</code> が優先されています。{% endif %}
+  </p>
+</div>
+
+<div class="card" style="max-width:860px">
+  <h2>受け取った施策（{{ ext_count }} 件）</h2>
+  {% if ext_count %}
+  <p class="small">
+    改善コックピットから届いた施策の実施日は、<a class="prop" href="/changes">変化ログ</a>で計測設定の変化と同じ時間軸に並びます。
+    <b>数字が動いた日の前後に設定変更が無いか</b>を確かめてから、施策の効果を判断してください。
+  </p>
+  <button class="btn" onclick="clearExternal()" {% if demo_mode %}disabled title="デモ環境では無効です"{% endif %}>受け取った施策を削除</button>
+  {% else %}
+  <p class="small">まだ届いていません。改善コックピット側で連携キーを登録し、実施日の入った施策を保存すると届きます。<b>届いていなくても変化ログは従来どおり使えます。</b></p>
+  {% endif %}
 </div>
 
 <div class="card" style="max-width:860px">
@@ -118,8 +148,11 @@ async function testCockpit(){
   }
 }
 
-async function copySelfUrl(){
-  const el = document.getElementById('self-url');
+async function copySelfUrl(){ await copyField('self-url'); }
+async function copyToken(){ await copyField('int-token'); }
+
+async function copyField(id){
+  const el = document.getElementById(id);
   try {
     await navigator.clipboard.writeText(el.value);
     showToast('コピーしました');
@@ -127,6 +160,28 @@ async function copySelfUrl(){
     el.select();
     showToast('手動でコピーしてください', 'error');
   }
+}
+
+async function rotateToken(){
+  const ok = await confirmModal('連携キーを作り直します。古いキーで送ってくる改善コックピットは以後拒否されるため、新しいキーを貼り直す必要があります。よろしいですか？');
+  if(!ok) return;
+  try {
+    const r = await fetch('/api/integration/token/rotate', {method:'POST'});
+    const d = await r.json();
+    if(d.ok){ document.getElementById('int-token').value = d.token; showToast('連携キーを作り直しました'); }
+    else { showToast('失敗: ' + (d.error || ''), 'error'); }
+  } catch(e){ showToast('失敗: ' + e.message, 'error'); }
+}
+
+async function clearExternal(){
+  const ok = await confirmModal('改善コックピットから受け取った施策の記録をすべて削除します。変化ログの計測設定の変化は消えません。よろしいですか？');
+  if(!ok) return;
+  try {
+    const r = await fetch('/api/external_events', {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){ showToast(`${d.deleted}件を削除しました`); setTimeout(() => location.reload(), 600); }
+    else { showToast('失敗: ' + (d.error || ''), 'error'); }
+  } catch(e){ showToast('失敗: ' + e.message, 'error'); }
 }
 </script>
 {% endblock %}

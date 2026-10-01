@@ -36,21 +36,31 @@
       <option value="ga4">GA4</option>
       <option value="gtm">GTM</option>
       <option value="sc">Search Console</option>
+      {% if ext_count %}<option value="initiative">改善施策</option>{% endif %}
     </select>
     <span class="small" id="ch-cnt"></span>
   </div>
+  {% if ext_count %}
+  <p class="small" style="margin:-4px 0 10px">
+    🏁 改善コックピットから受け取った施策 {{ ext_count }} 件を同じ時間軸に重ねています。
+    <b>数字が動いた日の前後に計測設定の変化が無いか</b>をここで確かめてください
+    （設定変更をまたいだ前後比較は、施策の効果と見分けがつきません）。
+  </p>
+  {% endif %}
 
   <div class="table-wrap scrollable">
   <table id="ch-tbl">
     <thead><tr>
-      <th>検出日時</th>
+      <th>日付</th>
       <th>重要度</th>
       <th>種別</th>
       <th>対象</th>
-      <th>変化内容</th>
+      <th>内容</th>
     </tr></thead>
     <tbody>
-    {% for e in events %}
+    {% for row in rows %}
+    {% set e = row.event %}
+    {% if row._row == 'change' %}
       <tr data-sev="{{ e.severity }}" data-kind="{{ e.kind }}"
           data-search="{{ ((e.entity_name or '') ~ ' ' ~ (e.message or ''))|lower }}">
         <td class="small" style="white-space:nowrap">{{ (e.detected_at or e.snapshot or '')[:16].replace('T',' ') }}</td>
@@ -71,6 +81,24 @@
           {% else %}{{ e.message }}{% endif %}
         </td>
       </tr>
+    {% else %}
+      {# 改善コックピットから受け取った施策。計測設定の変化ではないので重要度は付けない #}
+      <tr data-sev="external" data-kind="initiative" style="background:var(--g-bg)"
+          data-search="{{ ((e.title or '') ~ ' ' ~ (e.status or ''))|lower }}">
+        <td class="small" style="white-space:nowrap">{{ e.occurred_on }}</td>
+        <td><span class="badge b-role">🏁 施策</span></td>
+        <td class="small">{{ '施策' if e.kind == 'initiative' else ('診断' if e.kind == 'diagnosis' else 'その他') }}</td>
+        <td>
+          {% if e.property_id %}<a class="prop" href="/property/{{ e.property_id }}">プロパティ {{ e.property_id }}</a>
+          {% else %}<span class="small">（プロパティ未指定）</span>{% endif %}
+        </td>
+        <td class="small" style="max-width:500px">
+          {% if e.url %}<a class="prop" href="{{ e.url }}" target="_blank" rel="noopener">{{ e.title }}</a>
+          {% else %}{{ e.title }}{% endif %}
+          {% if e.status %}<span class="small" style="color:#888"> — {{ e.status }}</span>{% endif %}
+        </td>
+      </tr>
+    {% endif %}
     {% endfor %}
     </tbody>
   </table>
@@ -97,7 +125,7 @@ function applyCh(){
     r.style.display = ok ? '' : 'none';
     if(ok) shown++;
   }
-  ccnt.textContent = (s||csv.value||ckd.value) ? `${shown} / {{ events|length }} 件` : `{{ events|length }} 件`;
+  ccnt.textContent = (s||csv.value||ckd.value) ? `${shown} / {{ rows|length }} 件` : `{{ rows|length }} 件`;
 }
 [cq, csv, ckd].forEach(el => el.addEventListener('input', applyCh));
 applyCh();

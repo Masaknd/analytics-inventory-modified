@@ -233,3 +233,63 @@ def test_normalize_url_accepts_http_and_strips_slash():
 def test_normalize_url_rejects_non_http():
     for bad in ("", None, "   ", "ftp://x", "javascript:alert(1)", "example.com", "//example.com"):
         assert integration.normalize_url(bad) is None, bad
+
+
+# ============================================================
+#  連携キー（書き込みAPIの保護）
+# ============================================================
+
+def _isolate(tmp_path, monkeypatch):
+    monkeypatch.setattr(integration, "INTEGRATION_PATH", tmp_path / "integration.json")
+    monkeypatch.delenv(integration.TOKEN_ENV, raising=False)
+    monkeypatch.delenv(integration.COCKPIT_URL_ENV, raising=False)
+
+
+def test_check_token_is_fail_closed_when_unissued(tmp_path, monkeypatch):
+    """キーが未発行なら何を送られても通さない（書き込みは拒否が既定）。"""
+    _isolate(tmp_path, monkeypatch)
+    assert integration.token() is None
+    assert integration.check_token("anything") is False
+    assert integration.check_token("") is False
+    assert integration.check_token(None) is False
+
+
+def test_ensure_token_issues_once_and_is_stable(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    first = integration.ensure_token()
+    assert len(first) >= 20
+    assert integration.ensure_token() == first
+
+
+def test_check_token_matches_only_exact(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    tok = integration.ensure_token()
+    assert integration.check_token(tok) is True
+    assert integration.check_token(tok + "x") is False
+    assert integration.check_token(tok[:-1]) is False
+
+
+def test_rotate_token_invalidates_old(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    old = integration.ensure_token()
+    new = integration.rotate_token()
+    assert new != old
+    assert integration.check_token(old) is False
+    assert integration.check_token(new) is True
+
+
+def test_env_token_takes_priority(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    integration.ensure_token()
+    monkeypatch.setenv(integration.TOKEN_ENV, "env-token-value-1234567890")
+    assert integration.token() == "env-token-value-1234567890"
+    assert integration.token_from_env() is True
+
+
+def test_malformed_env_token_is_ignored(tmp_path, monkeypatch):
+    """短すぎる・記号混じりの環境変数は使わない（空文字で素通りさせない）。"""
+    _isolate(tmp_path, monkeypatch)
+    saved = integration.ensure_token()
+    monkeypatch.setenv(integration.TOKEN_ENV, "short")
+    assert integration.token_from_env() is False
+    assert integration.token() == saved

@@ -27,6 +27,7 @@ import changes as changes_mod
 import clients as clients_mod
 import crossref
 import diff as diff_mod
+import external_events
 import health
 import integration
 import notifications
@@ -1024,8 +1025,15 @@ def changes_page():
                 e["prev_snapshot"] = snaps[1]["stamp"]
             computed_live = True
     counts = changes_mod.summary_counts(events)
-    return render_template("changes.html", inv=inv, events=events,
-                           counts=counts, computed_live=computed_live,
+    # 改善コックピットから受け取った施策があれば同じ時間軸に重ねる。
+    # 受け取っていなければ空＝従来どおりの表示になる。
+    try:
+        ext = external_events.load()
+    except Exception:
+        ext = []
+    rows = external_events.timeline(events, ext)
+    return render_template("changes.html", inv=inv, events=events, rows=rows,
+                           ext_count=len(ext), counts=counts, computed_live=computed_live,
                            snapshot_count=len(diff_mod.list_snapshots()))
 
 
@@ -1141,9 +1149,20 @@ def api_thresholds():
 def integration_page():
     """改善コックピット（UX-Testing-Tools）との連携設定。未設定が既定＝連携なしで通常動作。"""
     inv = _load_inventory()
+    # 設定画面を開いた時点で連携キーを用意する（未発行のままだと書き込みAPIは常に拒否される）
+    try:
+        tok = integration.ensure_token()
+    except Exception:
+        tok = ""
+    try:
+        ext_count = len(external_events.load())
+    except Exception:
+        ext_count = 0
     return render_template("integration.html", inv=inv,
                            cockpit_url=integration.cockpit_url(),
                            from_env=integration.cockpit_url_from_env(),
+                           token=tok, token_from_env=integration.token_from_env(),
+                           ext_count=ext_count,
                            self_url=f"http://127.0.0.1:{SERVER_PORT}")
 
 
@@ -1164,6 +1183,50 @@ def api_integration_cockpit():
                         "error": "http:// または https:// で始まるURLを入れてください"}), 400
     saved = integration.save_cockpit_url(raw)
     return jsonify({"ok": True, "cockpit_url": saved})
+
+
+@app.route("/api/integration/token/rotate", methods=["POST"])
+def api_integration_token_rotate():
+    if DEMO_MODE:
+        return jsonify({"ok": False, "error": "デモ環境では無効です"}), 403
+    if integration.token_from_env():
+        return jsonify({"ok": False,
+                        "error": "環境変数 COCKPIT_TOKEN が優先されているため作り直せません"}), 409
+    return jsonify({"ok": True, "token": integration.rotate_token()})
+
+
+@app.route("/api/external_events", methods=["DELETE"])
+def api_external_events_clear():
+    if DEMO_MODE:
+        return jsonify({"ok": False, "error": "デモ環境では無効です"}), 403
+    return jsonify({"ok": True, "deleted": external_events.delete_source("cockpit")})
+
+
+@app.route("/api/external_events", methods=["POST"])
+def api_external_events():
+    """改善コックピットから施策・診断の実施日を受け取る。**書き込みなので連携キーが要る。**
+
+    KPIが動いたときに「施策の効果か、計測設定が変わったせいか」を切り分けるための材料で、
+    受け取った内容は変化ログと同じ時間軸に並べて表示する。
+
+    こちらから取りに行かないので、相手が落ちていても本ツールには影響しない。
+    """
+    if DEMO_MODE:
+        return jsonify({"ok": False, "error": "デモ環境では受け取りを無効にしています"}), 403
+    given = request.headers.get("X-Integration-Token") or ""
+    if not integration.check_token(given):
+        # キー未発行と不一致を区別して返す（相手側の「直し方」が変わるため）
+        if not integration.token():
+            return jsonify({"ok": False, "error": "連携キーが未発行です",
+                            "hint": "管理システムの ⚙ →「改善コックピット連携」を一度開いてください。"}), 401
+        return jsonify({"ok": False, "error": "連携キーが一致しません",
+                        "hint": "管理システムの設定画面でキーを確認し直してください。"}), 401
+    body = request.get_json(silent=True) or {}
+    events = body.get("events", body if isinstance(body, list) else None)
+    result = external_events.record(events)
+    if result.get("error"):
+        return jsonify({"ok": False, **result}), 400
+    return jsonify({"ok": True, **result})
 
 
 @app.route("/api/integration/cockpit/test", methods=["POST"])
