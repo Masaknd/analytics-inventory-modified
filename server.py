@@ -1362,15 +1362,29 @@ def api_notify_preview():
     return Response(html, mimetype="text/html; charset=utf-8")
 
 
+# 心拍が途絶えてから「異常終了した」とみなすまでの時間（秒）。
+# indexer は進捗ログのたびにロックを更新するので、生きていれば必ず心拍がある。
+INDEXER_HEARTBEAT_TIMEOUT_SEC = 15 * 60
+
+
 def _indexer_running() -> bool:
-    """Lock-file based check (no psutil dependency). A stale lock older than
-    90 minutes is ignored so a crashed indexer can't block refreshes forever."""
+    """ロックファイルの**心拍**で実行中かを判定する（psutil 非依存）。
+
+    indexer は収集中、ログを出すたびにロックを更新する。心拍が
+    INDEXER_HEARTBEAT_TIMEOUT_SEC 途絶えていたら異常終了とみなし、
+    放置されたロックで再収集が永久にできなくなるのを防ぐ。
+
+    **開始からの経過時間では判定しない。** 以前は「90分より古いロックは無効」と
+    していたため、アカウント追加などで収集が90分を超えると、まだ動いている最中に
+    「完了した」と表示され、再収集を押せば二重起動して
+    inventory.json / details を壊せる状態だった。
+    """
     from config import INDEXER_LOCK_PATH
     if not INDEXER_LOCK_PATH.exists():
         return False
     try:
         age = datetime.now().timestamp() - INDEXER_LOCK_PATH.stat().st_mtime
-        return age < 90 * 60
+        return age < INDEXER_HEARTBEAT_TIMEOUT_SEC
     except Exception:
         return False
 

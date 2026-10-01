@@ -25,8 +25,32 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ロックに生存の印を付ける間隔（秒）。毎回書くとファイル書き込みが無駄に増える。
+_HEARTBEAT_INTERVAL_SEC = 60
+_last_heartbeat = 0.0
+
+
+def _touch_lock() -> None:
+    """ロックファイルを更新して「まだ動いている」ことを示す（心拍）。
+
+    実行中かどうかはロックの古さで判定するので、心拍が無いと**長い収集の途中で
+    「古い＝もう動いていない」と誤判定される**。誤判定されると二重起動が許され、
+    inventory.json と details を同時に書いて壊す。
+    """
+    global _last_heartbeat
+    now = time.time()
+    if now - _last_heartbeat < _HEARTBEAT_INTERVAL_SEC:
+        return
+    _last_heartbeat = now
+    try:
+        INDEXER_LOCK_PATH.write_text(_now(), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+    _touch_lock()
 
 
 def collect_property(creds, email: str, account: dict, prop: dict) -> dict:
