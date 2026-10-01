@@ -40,7 +40,8 @@ CHANGES_DAYS = 30
 # /api/health の api_features を見て出し分けられる。
 #   property_summary_v2 … summary が monitoring/hostnames/key_events/recent_changes を返す
 #   external_events     … 施策の実施日を受け取れる（POST /api/external_events・要連携キー）
-API_FEATURES = ["property_summary_v2", "external_events"]
+#   reliability         … 「数字を信用してよい期間」を返せる（GET /api/property/<id>/reliability）
+API_FEATURES = ["property_summary_v2", "external_events", "reliability"]
 
 
 # ============================================================

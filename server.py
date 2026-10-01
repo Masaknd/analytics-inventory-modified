@@ -31,6 +31,7 @@ import external_events
 import health
 import integration
 import notifications
+import reliability
 import thresholds
 import update_check
 from config import DEMO_MODE, DETAILS_DIR, GITHUB_REPO, GTM_DETAILS_DIR, SC_DETAILS_DIR, INVENTORY_PATH, SERVER_PORT, SITE_SCANS_DIR
@@ -1183,6 +1184,36 @@ def api_integration_cockpit():
                         "error": "http:// または https:// で始まるURLを入れてください"}), 400
     saved = integration.save_cockpit_url(raw)
     return jsonify({"ok": True, "cockpit_url": saved})
+
+
+@app.route("/api/property/<pid>/reliability")
+def api_property_reliability(pid: str):
+    """姉妹ツール向け: このプロパティの「数字を信用してよい期間」。認証なし・読み取り専用。
+
+    計測設定の履歴を持っているのは管理システムだけなので、相手側では作れない情報。
+    前後比較・月次レポート・A/Bの検出力判定が、壊れていた期間の数字を使わないために読む。
+
+    ?start=YYYY-MM-DD&end=YYYY-MM-DD を付けると、その窓を使ってよいかを判定して返す
+    （ok / unreliable / **unknown**。変化ログがその期間まで遡れていなければ unknown で、
+    「問題なし」とは言わない）。
+    """
+    if not _safe_id(pid):
+        return jsonify({"error": "invalid property id"}), 404
+    # ここは filter_excluded を通さない。監視から外したプロパティでも、
+    # 「その期間に計測が壊れていたか」という事実は変わらないため
+    # （通知を止めたことと、数字を信用してよいかは別の話）。
+    try:
+        events = changes_mod.load_log(limit=changes_mod.MAX_LOG_ENTRIES)
+    except Exception:
+        events = []
+
+    start = request.args.get("start")
+    end = request.args.get("end")
+    if start or end:
+        win = reliability.default_window()
+        out = reliability.judge_window(events, pid, start or win["start"], end or win["end"])
+        return jsonify({"property_id": pid, **out})
+    return jsonify({"property_id": pid, **reliability.build(events, pid)})
 
 
 @app.route("/api/integration/token/rotate", methods=["POST"])
