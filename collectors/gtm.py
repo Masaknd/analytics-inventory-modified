@@ -76,14 +76,36 @@ def summarize_container(creds, container: dict) -> tuple[dict, dict | None]:
         out["variable_count"] = len(live.get("variable", []) or [])
         out["version_name"] = live.get("name")
         out["version_id"] = live.get("containerVersionId")
-        for t in tags:
-            if t.get("type") in ("gaawe", "gaawc"):
-                for p in t.get("parameter", []) or []:
-                    if p.get("key") in ("measurementId", "measurementIdOverride"):
-                        v = p.get("value", "")
-                        if v and v not in out["ga4_measurement_ids"]:
-                            out["ga4_measurement_ids"].append(v)
+        out["ga4_measurement_ids"] = extract_ga4_measurement_ids(tags)
     return out, live
+
+
+# GTM の「Google タグ」は API 上で 2 つの形がある（新しいコンテナは dest_ga で返る）
+_GOOGLE_TAG_ID_PARAMS = {("googtag", "tagId"), ("dest_ga", "destinationId")}
+
+
+def _is_ga4_id_param(ttype: str | None, key: str | None, value: str) -> bool:
+    if ttype in ("gaawe", "gaawc"):
+        return key in ("measurementId", "measurementIdOverride")
+    if (ttype, key) in _GOOGLE_TAG_ID_PARAMS:
+        # Google タグは Google 広告(AW-)等にも使われるので、GA4(G-)か未解決の変数参照だけを採る
+        return value.startswith(("G-", "{{"))
+    return False
+
+
+def extract_ga4_measurement_ids(tags: list) -> list[str]:
+    """公開バージョンのタグから GA4 Measurement ID を出現順・重複なしで集める。
+
+    現行の Google タグは googtag なら tagId、dest_ga なら destinationId に ID を持ち、
+    旧世代の GA4 設定/イベントタグ（gaawc/gaawe）は measurementId(Override) に持つ。
+    """
+    ids: list[str] = []
+    for t in tags or []:
+        for p in t.get("parameter", []) or []:
+            v = p.get("value") or ""
+            if v and v not in ids and _is_ga4_id_param(t.get("type"), p.get("key"), v):
+                ids.append(v)
+    return ids
 
 
 def list_tags(creds, container: dict) -> list[dict]:

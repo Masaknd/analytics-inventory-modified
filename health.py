@@ -11,6 +11,7 @@ from collections import defaultdict
 from typing import Optional
 
 import thresholds as _th
+from collectors.gtm import extract_ga4_measurement_ids
 
 
 def score_property(p: dict) -> dict:
@@ -288,7 +289,8 @@ def _summarize_live(live: dict | None) -> dict:
             ua += 1
         if ttype == "html":
             html += 1
-        if ttype == "gaawc":
+        # googtag/dest_ga は gaawc の後継（GTM の「Google タグ」）。広告(AW-)用は数えない
+        if ttype == "gaawc" or (ttype in ("googtag", "dest_ga") and extract_ga4_measurement_ids([t])):
             ga4_config += 1
         elif ttype == "gaawe":
             ga4_event += 1

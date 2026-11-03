@@ -96,6 +96,29 @@ def test_html_ua_remnants():
     assert q["html_ua_tags"] == ["旧GA計測"]
 
 
+def test_google_tag_counts_as_ga4_config():
+    """googtag だけのコンテナに「GA4設定タグが存在しない」を出さない。"""
+    live = {"tag": [_tag("googtag", "Google タグ", {"tagId": "G-XXXX"})],
+            "trigger": [], "variable": []}
+    c = {"version_id": "5", "tag_count": 1, "ga4_measurement_ids": ["G-XXXX"],
+         "usage_context": ["web"]}
+    codes = [a["code"] for a in health.detect_container_alerts(c, live)]
+    assert "gtm.no_config_tag" not in codes
+    assert "gtm.no_ga4" not in codes
+
+
+def test_destination_google_tag_counts_as_ga4_config():
+    live = {"tag": [_tag("dest_ga", "GA4 All_Pages", {"destinationId": "G-XXXX"})],
+            "trigger": [], "variable": []}
+    assert health._summarize_live(live)["ga4_config_count"] == 1
+
+
+def test_ads_google_tag_is_not_ga4_config():
+    live = {"tag": [_tag("googtag", "Google 広告", {"tagId": "AW-123"})],
+            "trigger": [], "variable": []}
+    assert health._summarize_live(live)["ga4_config_count"] == 0
+
+
 def test_container_alert_codes():
     live = {"tag": [
         _tag("awct", "CV_A", {"conversionId": "1", "conversionLabel": "x"}),
